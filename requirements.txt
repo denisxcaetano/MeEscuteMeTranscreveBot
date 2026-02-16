@@ -1,0 +1,22 @@
+# ============================================================
+# requirements.txt - Dependências do Bot de Transcrição
+# ============================================================
+# Instalar com: pip install -r requirements.txt
+# ============================================================
+
+# Framework para bots Telegram (async, tipado, bem documentado)
+# Docs: https://python-telegram-bot.readthedocs.io/
+python-telegram-bot==21.0
+
+# Cliente oficial OpenAI (acesso à API Whisper para transcrição)
+# Docs: https://platform.openai.com/docs/api-reference
+openai>=1.60.0
+
+# Manipulação de áudio (conversão de formatos, metadados)
+# Requer ffmpeg instalado no sistema
+# Docs: https://github.com/jiaaro/pydub
+pydub==0.25.1
+
+# Carregamento de variáveis de ambiente do arquivo .env
+# Docs: https://github.com/theskumar/python-dotenv
+python-dotenv==1.0.1

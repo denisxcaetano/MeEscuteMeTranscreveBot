@@ -1,0 +1,9 @@
+# ============================================================
+# nixpacks.toml - Pacotes de sistema para Railway
+# ============================================================
+# FFmpeg é obrigatório para a biblioteca pydub converter
+# formatos de áudio (ogg → mp3, m4a → mp3, etc).
+# ============================================================
+
+[phases.setup]
+aptPkgs = ["ffmpeg"]

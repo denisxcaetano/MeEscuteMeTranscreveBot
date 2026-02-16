@@ -1,0 +1,50 @@
+# ============================================================
+# .gitignore - Telegram Audio Transcriber Bot
+# ============================================================
+# Protege chaves API, arquivos temporários e cache do Python.
+# ============================================================
+
+# ---------- Variáveis de ambiente (NUNCA commitar) ----------
+.env
+
+# ---------- Python bytecode e cache ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# ---------- Ambientes virtuais ----------
+.venv/
+venv/
+env/
+ENV/
+
+# ---------- Dados locais do bot ----------
+data/authorized_users.json
+
+# ---------- Arquivos temporários de áudio ----------
+downloads/
+temp/
+*.mp3
+*.ogg
+*.wav
+*.m4a
+*.flac
+*.aac
+*.opus
+
+# ---------- Logs ----------
+*.log
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
