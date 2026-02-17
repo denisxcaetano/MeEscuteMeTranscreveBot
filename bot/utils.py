@@ -168,3 +168,20 @@ def cleanup_file(filepath: str) -> None:
             logger.debug(f"Arquivo temporário removido: {filepath}")
     except OSError as e:
         logger.warning(f"Falha ao remover arquivo temporário {filepath}: {e}")
+
+
+def mask_user_id(user_id: int | str) -> str:
+    """
+    Mascarar ID de usuário para logs (privacidade).
+    Exemplo: 12345678 -> 12***678
+
+    Args:
+        user_id: ID do usuário (int ou str).
+
+    Retorna:
+        ID mascarado.
+    """
+    s_id = str(user_id)
+    if len(s_id) <= 4:
+        return "****"
+    return f"{s_id[:2]}***{s_id[-3:]}"

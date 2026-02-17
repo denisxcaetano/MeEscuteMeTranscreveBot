@@ -33,6 +33,7 @@ import logging
 import os
 from pathlib import Path
 
+from bot.utils import mask_user_id
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -123,10 +124,10 @@ def authenticate_user(user_id: int, password: str) -> bool:
         users = _load_authorized_users()
         users.add(user_id)
         _save_authorized_users(users)
-        logger.info(f"[AUTH] Usuário {user_id} autenticado com sucesso")
+        logger.info(f"[AUTH] Usuário {mask_user_id(user_id)} autenticado com sucesso")
         return True
 
-    logger.warning(f"[AUTH] Tentativa de autenticação falhou para usuário {user_id}")
+    logger.warning(f"[AUTH] Tentativa de autenticação falhou para usuário {mask_user_id(user_id)}")
     return False
 
 
@@ -148,7 +149,7 @@ def revoke_user(user_id: int) -> bool:
     if user_id in users:
         users.discard(user_id)
         _save_authorized_users(users)
-        logger.info(f"[AUTH] Usuário {user_id} teve acesso revogado")
+        logger.info(f"[AUTH] Usuário {mask_user_id(user_id)} teve acesso revogado")
         return True
 
     return False

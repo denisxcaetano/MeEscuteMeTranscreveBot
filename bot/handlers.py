@@ -49,7 +49,14 @@ from bot.utils import (
     format_duration,
     format_file_size,
     get_language_name,
+    mask_user_id,
 )
+
+# Rate limiting e anti-brute force (em memória)
+# {user_id: [timestamps_das_requests]}
+_user_requests: dict[int, list[float]] = {}
+# {user_id: {"attempts": int, "lockout_until": float}}
+_auth_attempts: dict[int, dict] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +146,18 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
     user_id = user.id
 
-    logger.info(f"[CMD] /start de {user.first_name} (ID: {user_id})")
+    logger.info(f"[CMD] /start de {user.first_name} (ID: {mask_user_id(user_id)})")
+
+    # ---------- 1. Verifica Lockout ----------
+    is_locked, time_left = _check_auth_lockout(user_id)
+    if is_locked:
+        await update.message.reply_text(
+            f"🚫 *Acesso Bloqueado*\n\n"
+            f"Muitas tentativas incorretas\\.\n"
+            f"Tente novamente em {format_duration(time_left)}\\.",
+            parse_mode="MarkdownV2"
+        )
+        return
 
     # Se já está autenticado, mostra boas-vindas
     if is_authorized(user_id):
@@ -162,11 +180,18 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     password = " ".join(args)  # Suporta senhas com espaços
 
     if authenticate_user(user_id, password):
+        # Sucesso: Limpa tentativas
+        if user_id in _auth_attempts:
+            _auth_attempts.pop(user_id)
+            
         await update.message.reply_text(
             AUTH_SUCCESS_MESSAGE,
             parse_mode="MarkdownV2",
         )
     else:
+        # Falha: Registra tentativa
+        _register_auth_failure(user_id)
+        
         await update.message.reply_text(
             AUTH_FAILED_MESSAGE,
             parse_mode="MarkdownV2",
@@ -186,6 +211,71 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         HELP_MESSAGE,
         parse_mode="MarkdownV2",
     )
+
+
+def _check_rate_limit(user_id: int) -> bool:
+    """
+    Verifica se o usuário atingiu o limite de requests (5 por minuto).
+
+    Args:
+        user_id: ID do usuário no Telegram.
+
+    Retorna:
+        True se estiver dentro do limite, False se excedeu.
+    """
+    now = time.time()
+    if user_id not in _user_requests:
+        _user_requests[user_id] = []
+
+    # Remove timestamps antigos (> 60s)
+    _user_requests[user_id] = [t for t in _user_requests[user_id] if now - t < 60]
+
+    # Verifica o limite
+    if len(_user_requests[user_id]) >= 5:
+        return False
+
+    # Registra a nova request
+    _user_requests[user_id].append(now)
+    return True
+
+
+def _check_auth_lockout(user_id: int) -> tuple[bool, float]:
+    """
+    Verifica se o usuário está em lockout (bloqueado por muitas tentativas).
+
+    Retorna:
+        (is_locked, time_left_seconds)
+    """
+    if user_id not in _auth_attempts:
+        return False, 0.0
+
+    state = _auth_attempts[user_id]
+    now = time.time()
+
+    # Verifica se o tempo de bloqueio já passou
+    if state.get("lockout_until", 0) > now:
+        return True, state["lockout_until"] - now
+
+    # Se passou do tempo e tinha bloqueio, reseta tentativas
+    if state.get("lockout_until", 0) > 0:
+        _auth_attempts.pop(user_id)
+        return False, 0.0
+
+    return False, 0.0
+
+
+def _register_auth_failure(user_id: int) -> None:
+    """Registra uma falha de autenticação e aplica lockout se necessário."""
+    now = time.time()
+    if user_id not in _auth_attempts:
+        _auth_attempts[user_id] = {"attempts": 0, "lockout_until": 0}
+
+    _auth_attempts[user_id]["attempts"] += 1
+
+    # Após 5 tentativas, bloqueia por 10 minutos
+    if _auth_attempts[user_id]["attempts"] >= 5:
+        _auth_attempts[user_id]["lockout_until"] = now + 600  # 10 min
+        logger.warning(f"[AUTH] Usuário {user_id} BLOQUEADO por 10 min (brute-force)")
 
 
 async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -209,6 +299,17 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(
             AUTH_REQUIRED_MESSAGE,
             parse_mode="MarkdownV2",
+        )
+        return
+
+    # ---------- 1.1 Rate Limiting ----------
+    if not _check_rate_limit(user_id):
+        logger.warning(f"[RATE-LIMIT] Usuário {user_id} excedeu o limite")
+        await update.message.reply_text(
+            "⏳ *Calma lá\\!*\n\n"
+            "Você atingiu o limite de 5 áudios por minuto\\.\n"
+            "Aguarde um instante antes de mandar o próximo\\.",
+            parse_mode="MarkdownV2"
         )
         return
 
@@ -239,7 +340,7 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return  # Não deveria chegar aqui, mas segurança extra
 
     logger.info(
-        f"[AUDIO] Recebido de {user.first_name} (ID: {user_id}): "
+        f"[AUDIO] Recebido de {user.first_name} (ID: {mask_user_id(user_id)}): "
         f"tamanho={format_file_size(file_size)}, "
         f"arquivo={original_filename or 'voice_message'}"
     )

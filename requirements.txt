@@ -4,17 +4,13 @@
 # Instalar com: pip install -r requirements.txt
 # ============================================================
 
-# Framework para bots Telegram (async, tipado, bem documentado)
-# Docs: https://python-telegram-bot.readthedocs.io/
+# Bot core
 python-telegram-bot==21.0
 
-# Cliente oficial OpenAI (acesso à API Whisper para transcrição)
-# Docs: https://platform.openai.com/docs/api-reference
-openai>=1.60.0
+# API OpenAI
+openai==1.60.2
 
-# Manipulação de áudio (conversão de formatos, metadados)
-# Requer ffmpeg instalado no sistema
-# Docs: https://github.com/jiaaro/pydub
+# Audio processing
 pydub==0.25.1
 
 # Carregamento de variáveis de ambiente do arquivo .env

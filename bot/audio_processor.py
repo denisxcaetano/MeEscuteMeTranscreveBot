@@ -94,6 +94,7 @@ def validate_audio_size(file_size: int) -> None:
 def _get_file_extension(file_path: str) -> str:
     """
     Extrai a extensão do arquivo (sem o ponto, lowercase).
+    Aplica sanitização básica para evitar caracteres maliciosos.
 
     Args:
         file_path: Caminho ou nome do arquivo.
@@ -101,7 +102,12 @@ def _get_file_extension(file_path: str) -> str:
     Retorna:
         Extensão em lowercase (ex: "ogg", "mp3").
     """
-    return Path(file_path).suffix.lstrip(".").lower()
+    # Remove qualquer tentativa de path traversal ou caracteres estranhos
+    safe_name = os.path.basename(file_path)
+    ext = Path(safe_name).suffix.lstrip(".").lower()
+    
+    # Filtra apenas caracteres alfanuméricos simples
+    return "".join(c for c in ext if c.isalnum())
 
 
 def _needs_conversion(file_path: str) -> bool:
@@ -227,6 +233,17 @@ async def download_and_prepare_audio(
 
         file_size = os.path.getsize(download_path)
         logger.info(f"[AUDIO] Download concluído: {format_file_size(file_size)}")
+
+        # Validação extra: tenta carregar o cabeçalho do áudio para ver se é válido
+        # Se não for um áudio real, pydub/ffmpeg vai disparar erro aqui
+        try:
+            AudioSegment.from_file(download_path).duration_seconds
+        except Exception as e:
+            logger.error(f"[SECURITY] Arquivo baixado não parece ser um áudio válido: {e}")
+            raise AudioValidationError(
+                "❌ O arquivo enviado não é um áudio válido ou está corrompido.\n"
+                "💡 Tente enviar o áudio novamente."
+            )
 
         # Converte para MP3 se necessário
         if _needs_conversion(download_path):
