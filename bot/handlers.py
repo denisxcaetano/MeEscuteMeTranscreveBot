@@ -377,8 +377,8 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
 
     await update.message.reply_text(
-        "🎙️ Áudio recebido! Como deseja o texto?\n\n"
-        "📄 *Resumo*: Pontos principais (BLUF)\n"
+        "🎙️ Áudio recebido\\! Como deseja o texto?\n\n"
+        "📄 *Resumo*: Pontos principais \\(BLUF\\)\n"
         "📋 *Ata*: Formato corporativo\n"
         "✍️ *Correção*: Texto corrigido e formatado\n"
         "📝 *Crua*: Transcrição exata do áudio",
