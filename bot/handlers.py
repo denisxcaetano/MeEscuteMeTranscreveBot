@@ -33,8 +33,10 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
 )
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.audio_processor import (
     AudioValidationError,
@@ -43,7 +45,7 @@ from bot.audio_processor import (
     validate_audio_size,
 )
 from bot.auth import authenticate_user, is_authorized
-from bot.transcription import TranscriptionError, transcribe_audio
+from bot.transcription import TranscriptionError, transcribe_audio, post_process_transcription
 from bot.utils import (
     cleanup_file,
     format_duration,
@@ -57,6 +59,10 @@ from bot.utils import (
 _user_requests: dict[int, list[float]] = {}
 # {user_id: {"attempts": int, "lockout_until": float}}
 _auth_attempts: dict[int, dict] = {}
+
+# Cache temporário de áudio para seleção de formato
+# {user_id: {"file_id": str, "timestamp": float, "original_filename": str}}
+_audio_cache: dict[int, dict] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -352,144 +358,148 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(e.user_message)
         return
 
-    # ---------- 4. Mensagem de processamento ----------
-    processing_msg = await update.message.reply_text(
-        PROCESSING_MESSAGE,
+    # ---------- 4. Armazena em cache e pede formato ----------
+    _audio_cache[user_id] = {
+        "file_id": file_id,
+        "timestamp": time.time(),
+        "original_filename": original_filename,
+    }
+
+    keyboard = [
+        [
+            InlineKeyboardButton("📄 Resumo", callback_data="fmt_summary"),
+            InlineKeyboardButton("📋 Ata", callback_data="fmt_minutes"),
+        ],
+        [
+            InlineKeyboardButton("✍️ Correção", callback_data="fmt_corrected"),
+            InlineKeyboardButton("📝 Crua", callback_data="fmt_raw"),
+        ],
+    ]
+
+    await update.message.reply_text(
+        "🎙️ Áudio recebido! Como deseja o texto?\n\n"
+        "📄 *Resumo*: Pontos principais (BLUF)\n"
+        "📋 *Ata*: Formato corporativo\n"
+        "✍️ *Correção*: Texto corrigido e formatado\n"
+        "📝 *Crua*: Transcrição exata do áudio",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="MarkdownV2",
     )
 
-    # Mostra indicador "digitando..." no chat
-    await update.effective_chat.send_action(ChatAction.TYPING)
 
-    # ---------- 5. Download e conversão ----------
-    audio_path = None
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Processa a escolha do formato de transcrição.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    user = update.effective_user
+    user_id = user.id
+    
+    # Extrai o formato (ex: "fmt_summary" -> "summary")
+    format_type = query.data.replace("fmt_", "")
+
+    # Valida Cache
     start_time = time.time()
+    cached_data = _audio_cache.get(user_id)
 
+    if not cached_data:
+        await query.edit_message_text("❌ Erro: Áudio expirado ou não encontrado. Envie novamente.")
+        return
+
+    # Verifica TTL (1 hora)
+    if start_time - cached_data["timestamp"] > 3600:
+        _audio_cache.pop(user_id)
+        await query.edit_message_text("❌ Erro: Áudio expirado. Envie novamente.")
+        return
+
+    file_id = cached_data["file_id"]
+    original_filename = cached_data["original_filename"]
+
+    # Limpa cache para economizar memória (já pegamos o que precisava enviando para processamento)
+    _audio_cache.pop(user_id)
+
+    # Feedback visual
+    await query.edit_message_text(f"🎙️ Processando: {format_type.title()}...")
+    
+    # Processamento (reaproveitando lógica do audio_handler antigo)
+    audio_path = None
+    
     try:
-        # Obtém o arquivo do Telegram
+        # Download e conversão
         telegram_file = await context.bot.get_file(file_id)
-
-        # Download + conversão para MP3
         audio_path = await download_and_prepare_audio(
             telegram_file,
             original_filename=original_filename,
         )
 
-        # Obtém duração real do áudio
-        duration = get_audio_duration(audio_path)
-
-        # Atualiza mensagem de processamento com duração estimada
-        if duration > 0:
-            est_time = max(10, duration * 0.1)  # ~10% da duração como estimativa
-            await processing_msg.edit_text(
-                f"🎙️ Transcrevendo áudio ({format_duration(duration)})...\n"
-                f"⏱️ Estimativa: ~{format_duration(est_time)}",
-            )
-
-        # Manter indicador de digitando durante a transcrição
-        await update.effective_chat.send_action(ChatAction.TYPING)
-
-        # ---------- 6. Transcrição ----------
+        # Transcrição Whisper
         result = await transcribe_audio(audio_path)
+        
+        # Pós-processamento GPT
+        final_text = result.text
+        if format_type != "raw":
+            await query.edit_message_text(f"🤖 Gerando {format_type} com IA...")
+            final_text = await post_process_transcription(result.text, format_type)
 
         elapsed = time.time() - start_time
 
         logger.info(
-            f"[RESULTADO] Transcrição completa: "
-            f"idioma={result.language}, "
-            f"duração_audio={format_duration(result.duration)}, "
-            f"tempo_processamento={format_duration(elapsed)}, "
-            f"caracteres={len(result.text)}"
+            f"[RESULTADO] Finalizado: {format_type} | "
+            f"Duração áudio: {format_duration(result.duration)}"
         )
 
-        # ---------- 7. Formata e envia resposta ----------
-        response = _format_transcription_response(result, elapsed)
-
-        # Deleta a mensagem "Processando..."
-        await processing_msg.delete()
-
-        # Envia a transcrição
-        # Se o texto for muito longo, divide em partes
+        response = _format_transcription_response(result, final_text, format_type, elapsed)
+        
+        # Envia resultado (apaga msg de status anterior se possível ou edita)
+        # Editando a mensagem do botão para o resultado final
+        # Se for muito longo, manda chunks
         if len(response) > 4000:
-            await _send_long_message(update, response)
+            await query.delete_message()
+            await _send_long_message(query, response) # query tem message associada
         else:
-            await update.message.reply_text(response)
-
-    except AudioValidationError as e:
-        await processing_msg.edit_text(e.user_message)
-        logger.warning(f"[ERRO] Validação de áudio falhou: {e.user_message}")
-
-    except TranscriptionError as e:
-        await processing_msg.edit_text(e.user_message)
-        logger.error(
-            f"[ERRO] Transcrição falhou: {e.user_message} | "
-            f"Detalhe: {e.technical_detail}"
-        )
+            await query.edit_message_text(response)
 
     except Exception as e:
-        await processing_msg.edit_text(
-            "❌ Erro inesperado ao processar o áudio.\n"
-            "💡 Tente enviar novamente."
-        )
-        logger.exception(f"[ERRO] Erro inesperado no handler de áudio: {e}")
-
+        logger.error(f"Erro no callback: {e}")
+        await query.edit_message_text("❌ Ocorreu um erro no processamento.")
+        
     finally:
-        # ---------- 8. Limpeza ----------
         if audio_path:
             cleanup_file(audio_path)
 
 
-def _format_transcription_response(result, elapsed: float) -> str:
+def _format_transcription_response(result, final_text: str, format_type: str, elapsed: float) -> str:
     """
-    Formata a resposta da transcrição para o Telegram.
-
-    Usa texto puro (sem MarkdownV2) para evitar problemas
-    de escape com conteúdo dinâmico da transcrição.
-
-    Layout:
-        📝 Transcrição
-        ─────────────
-        [texto transcrito]
-        ─────────────
-        🌐 Idioma: 🇧🇷 Português
-        ⏱️ Duração: 2min 30s
-        ⚡ Processado em: 15s
-
-    Args:
-        result: TranscriptionResult da transcrição.
-        elapsed: Tempo de processamento em segundos.
-
-    Retorna:
-        String formatada em texto puro para o Telegram.
+    Formata a resposta final.
     """
-    # Monta a resposta em texto puro (mais robusto que MarkdownV2)
+    titles = {
+        "raw": "Transcrição Crua",
+        "summary": "Resumo Executivo",
+        "minutes": "Ata Profissional",
+        "corrected": "Texto Corrigido"
+    }
+    
+    header = f"📝 {titles.get(format_type, 'Resultado')}"
+    
     lines = [
-        "📝 Transcrição",
+        header,
         "─────────────────",
         "",
-        result.text,
+        final_text,
         "",
         "─────────────────",
     ]
 
-    # Idioma detectado
     lines.append(f"🌐 Idioma: {result.language_name}")
-
-    # Se multilíngue, mostrar todos os idiomas
-    if result.is_multilingual:
-        lang_list = ", ".join(
-            get_language_name(lang)
-            for lang in result.detected_languages
-        )
-        lines.append(f"🌍 Multilíngue: {lang_list}")
-
-    # Duração do áudio
     if result.duration > 0:
         lines.append(f"⏱️ Duração: {format_duration(result.duration)}")
-
-    # Tempo de processamento
     lines.append(f"⚡ Processado em: {format_duration(elapsed)}")
 
     return "\n".join(lines)
+
+
 
 
 def _escape_markdown_v2(text: str) -> str:
@@ -520,24 +530,29 @@ def _escape_markdown_v2(text: str) -> str:
     return text
 
 
-async def _send_long_message(update: Update, text: str) -> None:
+async def _send_long_message(update_or_query, text: str) -> None:
     """
     Envia mensagens longas divididas em partes de 4000 caracteres.
-
-    O Telegram tem limite de 4096 caracteres por mensagem.
-    Dividimos em partes menores sem cortar palavras.
-
-    Args:
-        update: Objeto Update do Telegram.
-        text: Texto completo a ser enviado.
+    Suporta tanto Update quanto CallbackQuery.
     """
     max_len = 4000
+    
+    # Define a função de envio baseada no tipo de objeto
+    async def send_chunk(chunk):
+        if hasattr(update_or_query, "message") and update_or_query.message:
+             # É um CallbackQuery ou Update com message
+             # Se for CallbackQuery, usamos message.reply_text
+             target = update_or_query.message
+             await target.reply_text(chunk)
+        else:
+             # É um Update direto
+             await update_or_query.message.reply_text(chunk)
 
     while text:
         if len(text) <= max_len:
-            await update.message.reply_text(text)
+            await send_chunk(text)
             break
-
+        
         # Encontra o último espaço ou newline antes do limite
         split_pos = text.rfind("\n", 0, max_len)
         if split_pos == -1:
@@ -547,8 +562,8 @@ async def _send_long_message(update: Update, text: str) -> None:
 
         chunk = text[:split_pos]
         text = text[split_pos:].lstrip()
-
-        await update.message.reply_text(chunk)
+        
+        await send_chunk(chunk)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -591,6 +606,9 @@ def setup_handlers(application: Application) -> None:
 
     # Mensagens de voz (gravadas no Telegram)
     application.add_handler(MessageHandler(filters.VOICE, audio_handler))
+
+    # Handler de Callback dos Botões
+    application.add_handler(CallbackQueryHandler(callback_handler, pattern="^fmt_"))
 
     # Arquivos de áudio (enviados como mídia)
     application.add_handler(MessageHandler(filters.AUDIO, audio_handler))

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 
 from openai import OpenAI, APIError, APITimeoutError
 
+from bot.prompts import PROMPTS
 from bot.utils import get_language_name, format_duration
 from config.settings import settings
 
@@ -269,3 +270,42 @@ def _call_whisper_api(client: OpenAI, file_path: str) -> TranscriptionResult:
         is_multilingual=is_multilingual,
         duration=duration,
     )
+
+
+async def post_process_transcription(text: str, format_type: str) -> str:
+    """
+    Processa a transcrição com GPT-4o-mini para o formato desejado.
+
+    Args:
+        text: Texto original da transcrição.
+        format_type: 'summary', 'minutes' ou 'corrected'.
+
+    Retorna:
+        Texto processado no formato solicitado.
+    """
+    if format_type not in PROMPTS:
+        return text  # Se não houver prompt, retorna original (fallback)
+
+    client = _create_openai_client()
+    prompt = PROMPTS[format_type].replace("{transcription_text}", text)
+
+    try:
+        logger.info(f"[GPT] Processando formato '{format_type}' com gpt-4o-mini")
+        
+        # Chamada síncrona em thread separada
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Assistant de processamento de texto corporativo."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2, # Baixa criatividade para manter fidelidade
+            max_tokens=1500
+        )
+        
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        logger.error(f"[GPT] Erro no processamento: {e}")
+        return f"⚠️ Erro ao gerar {format_type}. Segue transcrição original:\n\n{text}"
