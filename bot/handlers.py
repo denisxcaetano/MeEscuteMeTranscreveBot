@@ -376,15 +376,20 @@ async def audio_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         ],
     ]
 
-    await update.message.reply_text(
-        "🎙️ Áudio recebido\\! Como deseja o texto?\n\n"
-        "📄 *Resumo*: Pontos principais \\(BLUF\\)\n"
-        "📋 *Ata*: Formato corporativo\n"
-        "✍️ *Correção*: Texto corrigido e formatado\n"
-        "📝 *Crua*: Transcrição exata do áudio",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="MarkdownV2",
-    )
+    try:
+        await update.message.reply_text(
+            "🎙️ <b>Áudio recebido!</b> Como deseja o texto?\n\n"
+            "📄 <b>Resumo</b>: Pontos principais (BLUF)\n"
+            "📋 <b>Ata</b>: Formato corporativo\n"
+            "✍️ <b>Correção</b>: Texto corrigido e formatado\n"
+            "📝 <b>Crua</b>: Transcrição exata do áudio",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"[ERROR] Falha ao enviar menu de opções: {e}")
+        await update.message.reply_text("❌ Erro ao exibir opções. Tente novamente.")
+
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
