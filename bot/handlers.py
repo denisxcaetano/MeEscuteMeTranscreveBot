@@ -37,6 +37,7 @@ from telegram.ext import (
     filters,
 )
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import Conflict
 
 from bot.audio_processor import (
     AudioValidationError,
@@ -583,7 +584,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         exc_info=context.error,
     )
 
-    # Tenta notificar o usuário
+    # Trata erro de conflito (múltiplas instâncias)
+    if isinstance(context.error, Conflict):
+        logger.critical(
+            "🛑 CONFLITO DETECTADO: Outra instância do bot esta rodando com o mesmo token!\n"
+            "   ⚠️ AÇÃO NECESSÁRIA: Feche outros terminais ou pare o bot antigo."
+        )
+        return
+
+    # Tenta notificar o usuário para outros erros
     if isinstance(update, Update) and update.effective_message:
         try:
             await update.effective_message.reply_text(
