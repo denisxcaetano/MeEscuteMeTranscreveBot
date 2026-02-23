@@ -52,6 +52,20 @@ Recebe áudios em qualquer formato, detecta automaticamente o idioma e retorna a
 
 ---
 
+### Como Usar
+
+1.  **Windows (Recomendado)**: Basta dar um duplo clique no arquivo `bot_iniciar.bat`. Ele configura tudo e inicia o bot automaticamente.
+2.  **Manual**:
+    ```bash
+    python -m venv .venv
+    .venv\Scripts\activate  # Windows
+    # source .venv/bin/activate  # macOS/Linux
+    pip install -r requirements.txt
+    python main.py
+    ```
+
+---
+
 ## 💻 Desenvolvimento Local
 
 ### 1. Clone o repositório
